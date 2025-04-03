@@ -6,6 +6,16 @@ local starterGui = game:GetService("StarterGui")
 local camera = workspace.CurrentCamera
 local me = plrs.LocalPlayer
 
+-- Camera bypass
+for _, con in next, getconnections(workspace.CurrentCamera.Changed) do
+    task.wait()
+    con:Disable()
+end
+for _, con in next, getconnections(workspace.CurrentCamera:GetPropertyChangedSignal("CFrame")) do
+    task.wait()
+    con:Disable()
+end
+
 local target = nil
 local stompLoop
 local isAutoStompActive = false
@@ -22,19 +32,32 @@ local espEnabled = true
 local espFolder = Instance.new("Folder", game.CoreGui)
 espFolder.Name = "ESP"
 
+-- Weapon icons dictionary
+local weaponIcons = {
+    ["Double Barrel"] = "rbxassetid://7733715400",  -- Double Barrel Shotgun icon
+    ["Revolver"] = "rbxassetid://7733718500",       -- Revolver icon
+    ["SMG"] = "rbxassetid://7733712000",            -- SMG icon
+    ["Knife"] = "rbxassetid://7733710000"           -- Knife icon
+}
+
 local ESP = {
     Boxes = {},
     Names = {},
-    Distances = {}
+    Distances = {},
+    HealthBars = {},
+    WeaponIcons = {}
 }
 
 local autoShootEnabled = false
 local shootLoop = nil
 
+local BulletTracers = {}
+local tracerDuration = 0.1
+
 local function mouse()
     if input.TouchEnabled then
         local viewportSize = camera.ViewportSize
-        return Vector2.new(viewportSize.X / 2, viewportSize.Y / 2)
+        return Vector2.new(viewportSize.X/2, viewportSize.Y/2)
     else
         return input:GetMouseLocation()
     end
@@ -45,6 +68,7 @@ local function get_closet()
     local closest_player
     local max_distance = math.huge
     local mouse_pos = mouse()
+    
     for _, player in pairs(plrs:GetPlayers()) do
         if player ~= me and player.Character and player.Character:FindFirstChild("Head") then
             local screen_pos, on_screen = camera:WorldToViewportPoint(player.Character.Head.Position)
@@ -64,6 +88,7 @@ local function shoot()
     if target and target.Character and target.Character:FindFirstChild("Head") then
         local Headd = target.Character.Head
         local Root = me.Character:WaitForChild("HumanoidRootPart")
+        
         local args = {
             [1] = "Shoot",
             [2] = {
@@ -89,14 +114,7 @@ local function shoot()
     end
 end
 
-me.Backpack.ChildAdded:Connect(function(child)
-    if child:IsA("Tool") then
-        child.Equipped:Connect(function()
-            child.Activated:Connect(shoot)
-        end)
-    end
-end)
-
+-- Connect to all current tools
 for _, tool in pairs(me.Backpack:GetChildren()) do
     if tool:IsA("Tool") then
         tool.Equipped:Connect(function()
@@ -105,6 +123,16 @@ for _, tool in pairs(me.Backpack:GetChildren()) do
     end
 end
 
+-- Connect to future tools
+me.Backpack.ChildAdded:Connect(function(child)
+    if child:IsA("Tool") then
+        child.Equipped:Connect(function()
+            child.Activated:Connect(shoot)
+        end)
+    end
+end)
+
+-- Connect to current character's tool
 if me.Character then
     local tool = me.Character:FindFirstChildOfClass("Tool")
     if tool then
@@ -112,25 +140,14 @@ if me.Character then
     end
 end
 
+-- Connect to future character's tools
 me.CharacterAdded:Connect(function(character)
     character.ChildAdded:Connect(function(child)
         if child:IsA("Tool") then
             child.Activated:Connect(shoot)
         end
     end)
-    task.wait(1)  -- Wait for humanoid to load
-    removeJumpCooldown()
 end)
-
-local function removeJumpCooldown()
-    if me.Character and me.Character:FindFirstChild("Humanoid") then
-        local humanoid = me.Character.Humanoid
-        if humanoid.UseJumpPower then
-            humanoid.UseJumpPower = false
-        end
-        humanoid.JumpPower = 50
-    end
-end
 
 local Loop
 local loopFunction = function()
@@ -246,16 +263,40 @@ local function createESP(player)
     distance.Size = 14
     distance.Center = true
     distance.Outline = true
+
+    -- Create health bar
+    local healthBar = {
+        outline = Drawing.new("Square"),
+        fill = Drawing.new("Square")
+    }
+    healthBar.outline.Visible = false
+    healthBar.outline.Color = Color3.new(0, 0, 0)
+    healthBar.outline.Thickness = 1
+    healthBar.outline.Filled = false
+    
+    healthBar.fill.Visible = false
+    healthBar.fill.Color = Color3.new(0, 1, 0)
+    healthBar.fill.Thickness = 1
+    healthBar.fill.Filled = true
+    
+    -- Create weapon icon
+    local weaponIcon = Drawing.new("Image")
+    weaponIcon.Visible = false
+    weaponIcon.Size = Vector2.new(20, 20)
+    weaponIcon.Transparency = 1
     
     -- Store ESP elements
     ESP.Boxes[player] = box
     ESP.Names[player] = name
     ESP.Distances[player] = distance
+    ESP.HealthBars[player] = healthBar
+    ESP.WeaponIcons[player] = weaponIcon
     
     local function updateESP()
         if player.Character and player.Character:FindFirstChild("Head") and player.Character:FindFirstChild("HumanoidRootPart") then
             local humanoidRootPart = player.Character.HumanoidRootPart
             local head = player.Character.Head
+            local humanoid = player.Character:FindFirstChild("Humanoid")
             
             -- Calculate distance
             local magnitude = (me.Character and me.Character:FindFirstChild("HumanoidRootPart")) and 
@@ -285,15 +326,54 @@ local function createESP(player)
                 distance.Text = distanceText
                 distance.Position = Vector2.new(bottom.X, boxPosition.Y - 40)
                 distance.Visible = true
+
+                -- Update health bar
+                if humanoid then
+                    local healthPercent = humanoid.Health / humanoid.MaxHealth
+                    local barHeight = boxSize.Y
+                    local barWidth = 3
+                    local barX = boxPosition.X - 5
+                    local barY = boxPosition.Y
+                    
+                    -- Update health bar outline
+                    healthBar.outline.Size = Vector2.new(barWidth, barHeight)
+                    healthBar.outline.Position = Vector2.new(barX, barY)
+                    healthBar.outline.Visible = true
+                    
+                    -- Update health bar fill
+                    local fillHeight = barHeight * healthPercent
+                    healthBar.fill.Size = Vector2.new(barWidth, fillHeight)
+                    healthBar.fill.Position = Vector2.new(barX, barY + (barHeight - fillHeight))
+                    healthBar.fill.Visible = true
+                    
+                    -- Update health bar color based on health percentage
+                    healthBar.fill.Color = Color3.new(1 - healthPercent, healthPercent, 0)
+                end
+
+                -- Update weapon icon
+                local tool = player.Character:FindFirstChildOfClass("Tool")
+                if tool and weaponIcons[tool.Name] then
+                    weaponIcon.Data = weaponIcons[tool.Name]
+                    weaponIcon.Position = Vector2.new(bottom.X - 10, boxPosition.Y + boxSize.Y + 5)
+                    weaponIcon.Visible = true
+                else
+                    weaponIcon.Visible = false
+                end
             else
                 box.Visible = false
                 name.Visible = false
                 distance.Visible = false
+                healthBar.outline.Visible = false
+                healthBar.fill.Visible = false
+                weaponIcon.Visible = false
             end
         else
             box.Visible = false
             name.Visible = false
             distance.Visible = false
+            healthBar.outline.Visible = false
+            healthBar.fill.Visible = false
+            weaponIcon.Visible = false
         end
     end
     
@@ -307,12 +387,18 @@ local function createESP(player)
         box.Visible = false
         name.Visible = false
         distance.Visible = false
+        healthBar.outline.Visible = false
+        healthBar.fill.Visible = false
+        weaponIcon.Visible = false
     end)
     
     player.CharacterAdded:Connect(function()
         box.Visible = false
         name.Visible = false
         distance.Visible = false
+        healthBar.outline.Visible = false
+        healthBar.fill.Visible = false
+        weaponIcon.Visible = false
         task.wait(1)
         updateESP()
     end)
@@ -327,6 +413,11 @@ local function refreshESP()
             ESP.Names[player] = nil
             ESP.Distances[player]:Remove()
             ESP.Distances[player] = nil
+            ESP.HealthBars[player].outline:Remove()
+            ESP.HealthBars[player].fill:Remove()
+            ESP.HealthBars[player] = nil
+            ESP.WeaponIcons[player]:Remove()
+            ESP.WeaponIcons[player] = nil
         end
     end
     
@@ -341,7 +432,6 @@ threading.RenderStepped:Connect(function()
     get_closet()
     task.wait(0.1)  -- Wait 0.1 seconds between refreshes
     refreshESP()
-    removeJumpCooldown()  -- Remove jump cooldown every frame
 end)
 
 local screenGui = Instance.new("ScreenGui", game.CoreGui)
@@ -376,8 +466,68 @@ game:GetService("CoreGui").ChildRemoved:Connect(function(child)
         for _, distance in pairs(ESP.Distances) do
             distance:Remove()
         end
+        for _, healthBar in pairs(ESP.HealthBars) do
+            healthBar.outline:Remove()
+            healthBar.fill:Remove()
+        end
+        for _, weaponIcon in pairs(ESP.WeaponIcons) do
+            weaponIcon:Remove()
+        end
         ESP.Boxes = {}
         ESP.Names = {}
         ESP.Distances = {}
+        ESP.HealthBars = {}
+        ESP.WeaponIcons = {}
     end
 end)
+
+-- Add hit marker functionality
+local function createHitMarker(hitPart, hitPlayer)
+    local hitMarker = Drawing.new("Text")
+    hitMarker.Text = "HIT"
+    hitMarker.Size = 20
+    hitMarker.Color = Color3.new(1, 0, 0)
+    hitMarker.Center = true
+    hitMarker.Outline = true
+    
+    local hitPos = hitPart.Position
+    local screenPos, onScreen = camera:WorldToViewportPoint(hitPos)
+    
+    if onScreen then
+        hitMarker.Position = Vector2.new(screenPos.X, screenPos.Y)
+        hitMarker.Visible = true
+        
+        -- Animate and remove hit marker
+        task.spawn(function()
+            for i = 1, 20 do
+                hitMarker.Position = hitMarker.Position + Vector2.new(0, -1)
+                task.wait(0.01)
+            end
+            hitMarker:Remove()
+        end)
+    end
+end
+
+-- Add bullet tracer functionality
+local function createBulletTracer(startPos, endPos)
+    local tracer = Drawing.new("Line")
+    tracer.Visible = true
+    tracer.Color = Color3.new(1, 0, 0)
+    tracer.Thickness = 1
+    tracer.Transparency = 1
+    
+    local startScreen, startOnScreen = camera:WorldToViewportPoint(startPos)
+    local endScreen, endOnScreen = camera:WorldToViewportPoint(endPos)
+    
+    if startOnScreen and endOnScreen then
+        tracer.From = Vector2.new(startScreen.X, startScreen.Y)
+        tracer.To = Vector2.new(endScreen.X, endScreen.Y)
+        table.insert(BulletTracers, tracer)
+        
+        task.delay(tracerDuration, function()
+            tracer:Remove()
+            table.remove(BulletTracers, table.find(BulletTracers, tracer))
+        end)
+    end
+end
+
